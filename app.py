@@ -71,29 +71,6 @@ st.markdown("""
         padding: 1rem;
         box-shadow: 0 4px 15px -1px rgba(220, 38, 38, 0.2);
     }
-    .stage-box {
-        padding: 0.6rem 0.8rem;
-        border-radius: 0.75rem;
-        font-size: 0.85rem;
-        margin-bottom: 0.5rem;
-        border: 1px solid #1e293b;
-        background-color: #030712;
-    }
-    .stage-active {
-        background-color: rgba(245, 158, 11, 0.15);
-        border: 1px solid #f59e0b;
-        color: #fef3c7;
-    }
-    .stage-reopened {
-        background-color: rgba(239, 68, 68, 0.2);
-        border: 1px solid #ef4444;
-        color: #fecdd3;
-    }
-    .stage-verifying {
-        background-color: rgba(6, 182, 212, 0.2);
-        border: 1px solid #06b6d4;
-        color: #cff4fc;
-    }
     .hash-log-item {
         background-color: #030712;
         border: 1px solid #1e293b;
@@ -145,27 +122,25 @@ def log_audit_event(event_text):
 if "app_role" not in st.session_state:
     st.session_state.app_role = "🏛️ Municipality Web Portal"
 
-if "use_live_esp32" not in st.session_state:
-    st.session_state.use_live_esp32 = False
-
 if "esp32_ip" not in st.session_state:
     st.session_state.esp32_ip = "192.168.1.50"
 
 if "incident_state" not in st.session_state:
     st.session_state.incident_state = "ESCALATED" # ESCALATED, VERIFYING, REOPENED, RESOLVED
-    st.session_state.confidence_score = 88
     
-    # Audit Chain
+    # Historical telemetry buffer for smooth charts
+    st.session_state.history_times = [datetime.now().strftime("%H:%M:%S") for _ in range(10)]
+    st.session_state.history_s1 = [0.0] * 10
+    st.session_state.history_s2 = [0.0] * 10
+    st.session_state.history_s3 = [0.0] * 10
+
+    # Audit Chain Initializer
     initial_chain = []
-    h1 = create_hash("ESP32 #2 (Sensor S3) registered 72.1 L/min usage")
-    h2 = create_hash("Flow Imbalance calculated (38.4 L/min loss on Sensor S2 branch)", h1)
-    h3 = create_hash("Confidence score reached 88% (>80% threshold)", h2)
-    h4 = create_hash("Auto-Escalation triggered: DMA Zone 4 Authority Alerted", h3)
+    h1 = create_hash("ESP32 Nodes initialized for live sensor streaming")
+    h2 = create_hash("Flow telemetry bound to DMA Zone 4", h1)
     
-    initial_chain.append({"event": "Auto-Escalation triggered: DMA Zone 4 Authority Alerted", "hash": h4, "time": "10:15:45 AM"})
-    initial_chain.append({"event": "Confidence score reached 88% (>80% threshold)", "hash": h3, "time": "10:15:30 AM"})
-    initial_chain.append({"event": "Flow Imbalance calculated (38.4 L/min loss on Sensor S2 branch)", "hash": h2, "time": "10:15:18 AM"})
-    initial_chain.append({"event": "ESP32 #2 (Sensor S3) registered 72.1 L/min usage", "hash": h1, "time": "10:15:02 AM"})
+    initial_chain.append({"event": "Flow telemetry bound to DMA Zone 4", "hash": h2, "time": datetime.now().strftime("%I:%M:%S %p")})
+    initial_chain.append({"event": "ESP32 Nodes initialized for live sensor streaming", "hash": h1, "time": datetime.now().strftime("%I:%M:%S %p")})
     st.session_state.audit_chain = initial_chain
 
 # Role 1: Citizen Tickets DB
@@ -175,7 +150,7 @@ if "citizen_tickets" not in st.session_state:
             "id": "TCK-8042",
             "locality": "DMA Zone 4 — Sector 7 Main Rd",
             "severity": "Major Burst",
-            "status": "Assigned", # Reported, Assigned, Fixed, Closed, Reopened
+            "status": "Assigned",
             "crew": "Crew Alpha (Nordic Hydro)",
             "eta": "2 Hours",
             "reported_time": "10:14 AM",
@@ -191,7 +166,7 @@ if "crew_tasks" not in st.session_state:
             "id": "TCK-8042",
             "zone": "Zone 4 - Sec 7",
             "assigned_by": "Municipal Admin",
-            "status": "Accepted", # Pending, Accepted, Progress, Repair Filed
+            "status": "Accepted",
             "eta": "2 Hours",
             "pipe_spec": "350mm PVC Distribution Line",
             "notes": "Valve Leak A requires replacement packing."
@@ -199,37 +174,27 @@ if "crew_tasks" not in st.session_state:
     ]
 
 # ==============================================================================
-# HARDWARE TELEMETRY ENGINE (LIVE ESP32 HTTP POLLING / SIMULATION FALLBACK)
+# REAL-TIME HARDWARE TELEMETRY ENGINE (PURE LIVE ESP32 POLLING)
 # ==============================================================================
 def fetch_esp32_telemetry():
-    if st.session_state.use_live_esp32:
-        try:
-            url = f"http://{st.session_state.esp32_ip}/data"
-            response = requests.get(url, timeout=1.5)
-            if response.status_code == 200:
-                data = response.json()
-                # Expecting JSON format: {"s1": 120.5, "s2": 10.0, "s3": 72.1}
-                s1 = round(float(data.get("s1", 120.5)), 1)
-                s2 = round(float(data.get("s2", 10.0)), 1)
-                s3 = round(float(data.get("s3", 72.1)), 1)
-                return s1, s2, s3, True
-        except Exception:
-            pass
-
-    # Simulation Fallback
-    np.random.seed(int(time.time()) % 1000)
-    noise1 = (np.random.rand() - 0.5) * 0.4
-    noise2 = (np.random.rand() - 0.5) * 0.4
-    s1 = round(120.5 + noise1, 1) # S1 Input
-    s3 = round(72.1 + noise2, 1)  # S3 Left Branch
-    s2 = round(10.0 + noise2, 1)  # S2 Right Branch
-    return s1, s2, s3, False
-
-node1_flow, node3_flow, node2_flow, is_hardware_live = fetch_esp32_telemetry()
-unaccounted_loss = round(node1_flow - node2_flow - node3_flow, 1)
+    """Polls the physical ESP32 HTTP endpoint for live sensor metrics."""
+    try:
+        url = f"http://{st.session_state.esp32_ip}/data"
+        response = requests.get(url, timeout=0.8)
+        if response.status_code == 200:
+            data = response.json()
+            s1 = round(float(data.get("s1", 0.0)), 1)
+            s2 = round(float(data.get("s2", 0.0)), 1)
+            s3 = round(float(data.get("s3", 0.0)), 1)
+            return s1, s2, s3, True
+    except Exception:
+        pass
+    
+    # Strict fallback: Zeroed state if hardware endpoint is offline
+    return 0.0, 0.0, 0.0, False
 
 # ==============================================================================
-# SIDEBAR CONTROL PANEL & INTERFACE SWITCHER
+# SIDEBAR CONTROL PANEL
 # ==============================================================================
 st.sidebar.markdown("### ⚙️ AQUAGUARD Navigation")
 
@@ -244,22 +209,10 @@ st.session_state.app_role = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🌐 ESP32 Hardware Connection")
-st.session_state.use_live_esp32 = st.sidebar.checkbox("Connect Live ESP32 Hardware", value=st.session_state.use_live_esp32)
-
-if st.session_state.use_live_esp32:
-    st.session_state.esp32_ip = st.sidebar.text_input("ESP32 Shared IP Address", value=st.session_state.esp32_ip)
-    if is_hardware_live:
-        st.sidebar.success("✅ Connected to ESP32 Network!")
-    else:
-        st.sidebar.warning("⚠️ Reading from Shared IP failed. Running simulation fallback.")
+st.sidebar.markdown("### 🌐 ESP32 Hardware Configuration")
+st.session_state.esp32_ip = st.sidebar.text_input("ESP32 IP / Endpoint URL", value=st.session_state.esp32_ip)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🎛️ Live Simulation Controls")
-
-if st.sidebar.button("🔄 Trigger Data Telemetry Refresh", use_container_width=True):
-    st.rerun()
-
 st.sidebar.caption("SIH Project Phase — Team Jal Lijiye (Nirvaan Architecture)")
 
 # ==============================================================================
@@ -283,9 +236,6 @@ st.markdown(f"""
         <div style="display: flex; align-items: center; gap: 0.75rem;">
             <span style="font-family: monospace; font-size: 0.75rem; color: #38bdf8; background: #0f172a; padding: 0.3rem 0.7rem; border-radius: 0.5rem; border: 1px solid #1e293b;">
                 Active Interface: <b>{st.session_state.app_role.split(' ')[1]}</b>
-            </span>
-            <span style="font-family: monospace; font-size: 0.75rem; color: {'#34d399' if is_hardware_live else '#fbbf24'}; background: {'#064e3b' if is_hardware_live else '#451a03'}; padding: 0.3rem 0.7rem; border-radius: 0.5rem; border: 1px solid {'#065f46' if is_hardware_live else '#78350f'};">
-                ● {'LIVE HARDWARE' if is_hardware_live else '3/3 ESP32 SIMULATED'}
             </span>
         </div>
     </div>
@@ -320,7 +270,6 @@ if st.session_state.app_role == "🏛️ Municipality Web Portal":
             </div>
             """, unsafe_allow_html=True)
 
-            # Interactive Municipal Actions
             c_act1, c_act2, c_act3 = st.columns(3)
             with c_act1:
                 if tck['status'] == "Reported":
@@ -334,12 +283,13 @@ if st.session_state.app_role == "🏛️ Municipality Web Portal":
             with c_act2:
                 if tck['status'] in ["Fixed", "Repair Filed"]:
                     if st.button("🔍 Verify Physics & Close", key="muni_verify"):
-                        # Check physical sensors
-                        if unaccounted_loss > 5.0:
+                        s1, s2, s3, _ = fetch_esp32_telemetry()
+                        loss = round(s1 - s2 - s3, 1)
+                        if loss > 5.0:
                             tck['status'] = "Reopened"
                             tck['dispute_count'] += 1
                             st.session_state.incident_state = "REOPENED"
-                            log_audit_event(f"🚨 Municipal Inspection FAILED for {tck['id']}! Sensor loss ({unaccounted_loss} L/min) persists. Ticket REOPENED.")
+                            log_audit_event(f"🚨 Municipal Inspection FAILED for {tck['id']}! Sensor loss ({loss} L/min) persists. Ticket REOPENED.")
                             st.error("False Repair Detected by ESP32 sensors! Ticket auto-reopened.")
                         else:
                             tck['status'] = "Closed"
@@ -353,23 +303,8 @@ if st.session_state.app_role == "🏛️ Municipality Web Portal":
                     st.warning("⚠️ High Priority Escalation Active!")
 
     with col2:
-        st.markdown("##### 🛰️ Cross-Verification Dashboard")
-        st.write("Cross-checking ground citizen reports against hardware telemetry.")
-        
-        st.markdown(f"""
-        <div class="role-card">
-            <div style="font-size: 0.85rem; color: #cbd5e1; font-weight: 600;">Hardware Telemetry Correlation</div>
-            <div style="font-size: 1.4rem; font-weight: 800; color: #ef4444; margin: 0.4rem 0; font-family: monospace;">
-                {unaccounted_loss} L/min Loss
-            </div>
-            <div style="font-size: 0.75rem; color: #94a3b8;">
-                Correlated with <b>Ticket #8042</b> (Sector 7 Main Line).
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
         st.markdown("##### 🔗 Real-Time Audit Log")
-        for item in st.session_state.audit_chain[:3]:
+        for item in st.session_state.audit_chain[:5]:
             st.markdown(f"""
             <div class="hash-log-item">
                 <div style="color: #e2e8f0; font-weight: 600;">{item['event']}</div>
@@ -428,9 +363,7 @@ elif st.session_state.app_role == "👨‍👩‍👧 Local Citizen Mobile App":
             </div>
             """, unsafe_allow_html=True)
 
-            # Dispute / Reopen Mechanism
             if tck['status'] in ["Fixed", "Closed", "Repair Filed"]:
-                st.warning("Municipality / Crew has marked this repair as complete.")
                 col_disp1, col_disp2 = st.columns(2)
                 with col_disp1:
                     if st.button("✅ Confirm Water Fixed", key=f"confirm_{tck['id']}"):
@@ -439,12 +372,12 @@ elif st.session_state.app_role == "👨‍👩‍👧 Local Citizen Mobile App":
                         st.success("Thank you for confirming!")
                         st.rerun()
                 with col_disp2:
-                    if st.button("🚨 Report False Repair (Reopen)", key=f"dispute_{tck['id']}"):
+                    if st.button("🚨 Report False Repair", key=f"dispute_{tck['id']}"):
                         tck['status'] = "Reopened"
                         tck['dispute_count'] += 1
                         st.session_state.incident_state = "REOPENED"
                         log_audit_event(f"🚨 CITIZEN DISPUTE! Citizen reported FALSE REPAIR on {tck['id']}. Ticket re-escalated.")
-                        st.error("Ticket re-opened and flagged for priority municipal audit!")
+                        st.error("Ticket re-opened and flagged for municipal audit!")
                         st.rerun()
 
 # ==============================================================================
@@ -471,13 +404,6 @@ elif st.session_state.app_role == "🛠️ Repair Crew Ground App":
             </div>
             """, unsafe_allow_html=True)
 
-            if task['status'] == "Pending":
-                if st.button("✅ Accept Task Assignment", key="accept_task"):
-                    task['status'] = "Accepted"
-                    log_audit_event(f"Repair Crew accepted task assignment {task['id']}")
-                    st.success("Task accepted!")
-                    st.rerun()
-
     with col_crew2:
         st.markdown("##### 📝 Submit Repair Status Update")
         with st.form("crew_update_form"):
@@ -489,7 +415,6 @@ elif st.session_state.app_role == "🛠️ Repair Crew Ground App":
             submit_work = st.form_submit_button("📤 Submit Repair Log")
             
             if submit_work:
-                # Update task and citizen DB
                 for t in st.session_state.crew_tasks:
                     if t['id'] == t_id:
                         t['status'] = c_status
@@ -503,230 +428,175 @@ elif st.session_state.app_role == "🛠️ Repair Crew Ground App":
                 st.rerun()
 
 # ==============================================================================
-# INTERFACE 4: ORIGINAL IOT HARDWARE TELEMETRY DASHBOARD
+# INTERFACE 4: IOT HARDWARE TELEMETRY DASHBOARD (ISOLATED NON-FLICKER FRAGMENT)
 # ==============================================================================
 else:
-    if st.session_state.incident_state == "REOPENED":
-        banner_title = "🚨 CRITICAL INCIDENT #8042 — FALSE REPAIR CAUGHT!"
-        banner_desc = f"<strong>Accountability Guard Triggered!</strong> Claimed repair rejected. Unaccounted flow loss of <span style='color: #ef4444; font-family: monospace; font-weight: bold;'>{unaccounted_loss} L/min</span> detected on Valve Leak A."
-        stage_label = "4. REOPENED (FALSE REPAIR)"
-        stage_color = "#ef4444"
-    elif st.session_state.incident_state == "VERIFYING":
-        banner_title = "⚡ INCIDENT #8042 — REPAIR VERIFICATION IN PROGRESS"
-        banner_desc = "Polling ESP32 physics sensors (S1, S2, S3) to verify repair claim..."
-        stage_label = "4. VERIFYING SENSOR PHYSICS..."
-        stage_color = "#22d3ee"
-    elif st.session_state.incident_state == "RESOLVED":
-        banner_title = "✅ INCIDENT #8042 — LEAK SUCCESSFULLY RESOLVED"
-        banner_desc = "Physical flow balance restored across S1, S2, and S3 sensors."
-        stage_label = "5. CLOSED & VERIFIED"
-        stage_color = "#34d399"
-    else:
-        banner_title = "⚠️ CRITICAL INCIDENT #8042 — LEAK DETECTED"
-        banner_desc = f"Unaccounted Flow Loss Detected: <span style='color: #ef4444; font-family: monospace; font-weight: bold;'>{unaccounted_loss} L/min</span> (Confidence Score: <span style='font-family: monospace; font-weight: bold; color: #ef4444;'>{st.session_state.confidence_score}%</span>)"
-        stage_label = "3. AUTO-ESCALATED"
-        stage_color = "#f59e0b"
+    @st.fragment(run_every=2)
+    def render_iot_live_dashboard():
+        node1_flow, node2_flow, node3_flow, is_hardware_live = fetch_esp32_telemetry()
+        unaccounted_loss = round(node1_flow - node2_flow - node3_flow, 1)
 
-    st.markdown(f"""
-    <div class="banner-alarm">
-        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
-            <div>
-                <div style="font-size: 0.9rem; font-weight: 700; color: #fecdd3;">{banner_title}</div>
-                <div style="font-size: 0.8rem; color: #e2e8f0; margin-top: 0.2rem;">{banner_desc}</div>
-            </div>
-            <div style="text-align: right;">
-                <div style="font-size: 0.65rem; color: #94a3b8; font-family: monospace; text-transform: uppercase;">Lifecycle Stage</div>
-                <div style="font-size: 0.85rem; font-weight: 800; font-family: monospace; color: {stage_color};">{stage_label}</div>
+        # Append to live history buffers
+        st.session_state.history_times.append(datetime.now().strftime("%H:%M:%S"))
+        st.session_state.history_s1.append(node1_flow)
+        st.session_state.history_s2.append(node2_flow)
+        st.session_state.history_s3.append(node3_flow)
+
+        st.session_state.history_times = st.session_state.history_times[-10:]
+        st.session_state.history_s1 = st.session_state.history_s1[-10:]
+        st.session_state.history_s2 = st.session_state.history_s2[-10:]
+        st.session_state.history_s3 = st.session_state.history_s3[-10:]
+
+        # Anomaly localization logic based on active readings
+        if unaccounted_loss > 5.0:
+            localized_node = "Valve Leak A (Right Branch — Node 03)"
+        elif not is_hardware_live:
+            localized_node = "Awaiting Live Hardware Signal..."
+        else:
+            localized_node = "System Nominal (No Active Leaks)"
+
+        if st.session_state.incident_state == "REOPENED":
+            banner_title = "🚨 CRITICAL INCIDENT #8042 — FALSE REPAIR CAUGHT!"
+            banner_desc = f"Accountability Guard Triggered! Claimed repair rejected. Unaccounted loss of <span style='color: #ef4444; font-family: monospace; font-weight: bold;'>{unaccounted_loss} L/min</span> isolated at <b>{localized_node}</b>."
+        elif st.session_state.incident_state == "RESOLVED":
+            banner_title = "✅ INCIDENT #8042 — LEAK SUCCESSFULLY RESOLVED"
+            banner_desc = "Physical flow balance restored across live S1, S2, and S3 sensors."
+        else:
+            banner_title = "⚠️ LIVE TELEMETRY FEED ACTIVE"
+            banner_desc = f"Unaccounted Loss: <span style='color: #ef4444; font-family: monospace; font-weight: bold;'>{unaccounted_loss} L/min</span> | Localized Fault: <b>{localized_node}</b>"
+
+        st.markdown(f"""
+        <div class="banner-alarm">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+                <div>
+                    <div style="font-size: 0.9rem; font-weight: 700; color: #fecdd3;">{banner_title}</div>
+                    <div style="font-size: 0.8rem; color: #e2e8f0; margin-top: 0.2rem;">{banner_desc}</div>
+                </div>
+                <div style="text-align: right;">
+                    <span style="font-family: monospace; font-size: 0.75rem; color: {'#34d399' if is_hardware_live else '#f87171'}; background: {'#064e3b' if is_hardware_live else '#450a0a'}; padding: 0.3rem 0.7rem; border-radius: 0.5rem; border: 1px solid {'#065f46' if is_hardware_live else '#7f1d1d'};">
+                        ● {'LIVE ESP32 CONNECTED' if is_hardware_live else 'HARDWARE DISCONNECTED'}
+                    </span>
+                </div>
             </div>
         </div>
-    </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
-    col_left, col_right = st.columns([7, 4])
+        col_left, col_right = st.columns([7, 4])
 
-    with col_left:
-        st.markdown("##### 📡 Live ESP32 Hardware Telemetry Nodes")
-        n_col1, n_col2, n_col3 = st.columns(3)
-        
-        with n_col1:
-            st.markdown(f"""
-            <div class="node-card">
-                <div style="display: flex; justify-content: space-between; font-size: 0.65rem; font-weight: 700; color: #38bdf8; font-family: monospace;">
-                    <span>ESP32 #1 — S1 INPUT</span>
-                    <span style="color: #34d399;">NODE-01</span>
-                </div>
-                <div style="font-size: 0.85rem; font-weight: 700; color: #f3f4f6; margin-top: 0.2rem;">Main Input Supply</div>
-                <div style="font-size: 1.8rem; font-weight: 800; font-family: monospace; color: #38bdf8; margin: 0.4rem 0;">
-                    {node1_flow} <span style="font-size: 0.75rem; color: #94a3b8;">L/min</span>
-                </div>
-                <div style="font-size: 0.7rem; color: #94a3b8; font-family: monospace;">Pressure: 2.41 Bar</div>
-            </div>
-            """, unsafe_allow_html=True)
+        with col_left:
+            st.markdown("##### 📡 Live Physical Sensor Telemetry")
+            n_col1, n_col2, n_col3 = st.columns(3)
             
-        with n_col2:
-            st.markdown(f"""
-            <div class="node-card">
-                <div style="display: flex; justify-content: space-between; font-size: 0.65rem; font-weight: 700; color: #38bdf8; font-family: monospace;">
-                    <span>ESP32 #2 — S3 LEFT</span>
-                    <span style="color: #38bdf8;">NODE-02</span>
+            with n_col1:
+                st.markdown(f"""
+                <div class="node-card">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.65rem; font-weight: 700; color: #38bdf8; font-family: monospace;">
+                        <span>ESP32 — S1 INPUT</span>
+                        <span style="color: #34d399;">NODE-01</span>
+                    </div>
+                    <div style="font-size: 0.85rem; font-weight: 700; color: #f3f4f6; margin-top: 0.2rem;">Main Supply</div>
+                    <div style="font-size: 1.8rem; font-weight: 800; font-family: monospace; color: #38bdf8; margin: 0.4rem 0;">
+                        {node1_flow} <span style="font-size: 0.75rem; color: #94a3b8;">L/min</span>
+                    </div>
                 </div>
-                <div style="font-size: 0.85rem; font-weight: 700; color: #f3f4f6; margin-top: 0.2rem;">Distribution Node A</div>
-                <div style="font-size: 1.8rem; font-weight: 800; font-family: monospace; color: #22d3ee; margin: 0.4rem 0;">
-                    {node2_flow} <span style="font-size: 0.75rem; color: #94a3b8;">L/min</span>
+                """, unsafe_allow_html=True)
+                
+            with n_col2:
+                st.markdown(f"""
+                <div class="node-card">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.65rem; font-weight: 700; color: #38bdf8; font-family: monospace;">
+                        <span>ESP32 — S2 BRANCH A</span>
+                        <span style="color: #38bdf8;">NODE-02</span>
+                    </div>
+                    <div style="font-size: 0.85rem; font-weight: 700; color: #f3f4f6; margin-top: 0.2rem;">Branch Node A</div>
+                    <div style="font-size: 1.8rem; font-weight: 800; font-family: monospace; color: #22d3ee; margin: 0.4rem 0;">
+                        {node2_flow} <span style="font-size: 0.75rem; color: #94a3b8;">L/min</span>
+                    </div>
                 </div>
-                <div style="font-size: 0.7rem; color: #94a3b8; font-family: monospace;">Leak B Valve: CLOSED</div>
+                """, unsafe_allow_html=True)
+                
+            with n_col3:
+                st.markdown(f"""
+                <div class="node-card-danger">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.65rem; font-weight: 700; color: #f87171; font-family: monospace;">
+                        <span>ESP32 — S3 BRANCH B</span>
+                        <span style="color: #f87171;">NODE-03</span>
+                    </div>
+                    <div style="font-size: 0.85rem; font-weight: 700; color: #f3f4f6; margin-top: 0.2rem;">Branch Node B</div>
+                    <div style="font-size: 1.8rem; font-weight: 800; font-family: monospace; color: #ef4444; margin: 0.4rem 0;">
+                        {node3_flow} <span style="font-size: 0.75rem; color: #94a3b8;">L/min</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # Live Topology Diagram
+            pipeline_html = f"""
+            <div style="background-color: #0b1329; border: 1px solid #1e293b; border-radius: 1rem; padding: 1.25rem; margin-bottom: 1rem; text-align: center;">
+                <div style="font-size: 0.85rem; font-weight: 700; color: #38bdf8; margin-bottom: 0.5rem;">
+                    📐 Live Hardware Topology & Anomaly Localization
+                </div>
+                <div style="display: flex; justify-content: space-around; align-items: center; margin-top: 1rem;">
+                    <div style="background: #0f172a; border: 1px solid #38bdf8; padding: 0.5rem 1rem; border-radius: 0.5rem; color: #38bdf8;">
+                        <b>S1 Input</b><br>{node1_flow} L/min
+                    </div>
+                    <div style="color: #64748b; font-weight: bold;">➔</div>
+                    <div style="background: #0f172a; border: 1px solid #22d3ee; padding: 0.5rem 1rem; border-radius: 0.5rem; color: #22d3ee;">
+                        <b>S2 Branch A</b><br>{node2_flow} L/min
+                    </div>
+                    <div style="color: #64748b; font-weight: bold;">➔</div>
+                    <div style="background: #450a0a; border: 1px solid #ef4444; padding: 0.5rem 1rem; border-radius: 0.5rem; color: #f87171;">
+                        <b>S3 Branch B</b><br>{node3_flow} L/min
+                    </div>
+                </div>
+                <div style="margin-top: 1rem; font-family: monospace; font-size: 0.8rem; color: #f87171;">
+                    Isolated Anomaly: <b>{localized_node}</b> (Unaccounted Loss = {unaccounted_loss} L/min)
+                </div>
             </div>
-            """, unsafe_allow_html=True)
+            """
+            st.markdown(pipeline_html, unsafe_allow_html=True)
+
+            # Live Plotly Telemetry Chart
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=st.session_state.history_times, y=st.session_state.history_s1, mode='lines+markers', name='S1 Input', line=dict(color='#38bdf8', width=2)))
+            fig.add_trace(go.Scatter(x=st.session_state.history_times, y=st.session_state.history_s2, mode='lines+markers', name='S2 Branch A', line=dict(color='#22d3ee', width=2)))
+            fig.add_trace(go.Scatter(x=st.session_state.history_times, y=st.session_state.history_s3, mode='lines+markers', name='S3 Branch B', line=dict(color='#ef4444', width=2)))
             
-        with n_col3:
-            st.markdown(f"""
-            <div class="node-card-danger">
-                <div style="display: flex; justify-content: space-between; font-size: 0.65rem; font-weight: 700; color: #f87171; font-family: monospace;">
-                    <span>ESP32 #3 — S2 RIGHT</span>
-                    <span style="color: #f87171;">NODE-03</span>
+            fig.update_layout(
+                template='plotly_dark',
+                paper_bgcolor='#0b1329',
+                plot_bgcolor='#030712',
+                margin=dict(l=20, r=20, t=30, b=20),
+                height=250,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col_right:
+            st.markdown("##### 🛡️ Physical Hardware Audit")
+            
+            if st.button("🔍 Check Physical Fix Status", use_container_width=True, type="primary"):
+                if unaccounted_loss > 5.0:
+                    st.session_state.incident_state = "REOPENED"
+                    log_audit_event(f"🚨 REPAIR REJECTED! Live sensors measured {unaccounted_loss} L/min loss. Incident AUTO-REOPENED.")
+                else:
+                    st.session_state.incident_state = "RESOLVED"
+                    log_audit_event("✅ Physical flow balanced. Incident RESOLVED.")
+                st.rerun()
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("##### 🔗 SHA-256 Audit Log")
+            for item in st.session_state.audit_chain[:4]:
+                st.markdown(f"""
+                <div class="hash-log-item">
+                    <div style="color: #e2e8f0; font-weight: 600;">{item['event']}</div>
+                    <div style="display: flex; justify-content: space-between; color: #06b6d4; font-family: monospace; margin-top: 0.2rem;">
+                        <span>Hash: {item['hash']}</span>
+                        <span style="color: #64748b;">{item['time']}</span>
+                    </div>
                 </div>
-                <div style="font-size: 0.85rem; font-weight: 700; color: #f3f4f6; margin-top: 0.2rem;">Distribution Node B</div>
-                <div style="font-size: 1.8rem; font-weight: 800; font-family: monospace; color: #ef4444; margin: 0.4rem 0;">
-                    {node3_flow} <span style="font-size: 0.75rem; color: #94a3b8;">L/min</span>
-                </div>
-                <div style="font-size: 0.7rem; color: #f87171; font-family: monospace;">Leak A Valve: ACTIVE</div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
 
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        st.markdown("##### 🛠️ Hardware Pipeline Setup (Matching Rig Sketch)")
-        
-        pipeline_html = f"""
-    <div style="background-color: #0b1329; border: 1px solid #1e293b; border-radius: 1rem; padding: 1.25rem; margin-bottom: 1rem; text-align: center;">
-    <div style="font-size: 0.85rem; font-weight: 700; color: #38bdf8; margin-bottom: 0.5rem;">
-    📐 Pipeline Topology (3 Sensors + 2 Simulation Leak Valves)
-    </div>
-
-    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; padding: 1rem 0;">
-
-    <div style="display: flex; flex-direction: column; align-items: center; margin-bottom: 0.5rem;">
-    <span style="font-size: 0.75rem; font-weight: bold; color: #22d3ee; font-family: monospace;">⬇ MAIN INPUT WATER SUPPLY</span>
-    <div style="width: 12px; height: 35px; background: linear-gradient(180deg, #0284c7, #38bdf8); border: 1px solid #0284c7; border-radius: 4px;"></div>
-    <div style="background: #0f172a; border: 2px solid #38bdf8; padding: 0.4rem 0.8rem; border-radius: 0.5rem; color: #38bdf8; font-weight: bold; font-family: monospace; font-size: 0.8rem; box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);">
-    Sensor S1 (Input): {node1_flow} L/min
-    </div>
-    <div style="width: 12px; height: 25px; background: linear-gradient(180deg, #38bdf8, #0284c7); border: 1px solid #0284c7;"></div>
-    </div>
-
-    <div style="position: relative; width: 85%; max-width: 520px; display: flex; justify-content: space-between; align-items: flex-start;">
-    <div style="position: absolute; top: 0; left: 0; right: 0; height: 12px; background: linear-gradient(90deg, #0284c7, #22d3ee, #0284c7); border: 1px solid #0284c7; border-radius: 6px; z-index: 1;"></div>
-
-    <div style="display: flex; flex-direction: column; align-items: center; width: 45%; padding-top: 15px; position: relative; z-index: 2;">
-    <div style="font-size: 0.7rem; color: #94a3b8; font-family: monospace; margin-bottom: 0.2rem;">Left Branch</div>
-    <div style="background: #030712; border: 1px solid #06b6d4; padding: 0.3rem 0.6rem; border-radius: 0.4rem; color: #22d3ee; font-family: monospace; font-size: 0.75rem; margin-bottom: 0.5rem;">
-    Sensor S3: {node2_flow} L/min
-    </div>
-    <div style="background: #1e1b4b; border: 1px dashed #6366f1; padding: 0.3rem 0.5rem; border-radius: 0.4rem; color: #a5b4fc; font-size: 0.7rem; font-family: monospace; margin-bottom: 0.4rem;">
-    🚰 Valve Leak B (Closed)
-    </div>
-    <div style="width: 10px; height: 20px; background: #0284c7;"></div>
-    <span style="font-size: 0.7rem; font-weight: bold; color: #22d3ee; font-family: monospace;">Outlet B ↴</span>
-    </div>
-
-    <div style="display: flex; flex-direction: column; align-items: center; width: 45%; padding-top: 15px; position: relative; z-index: 2;">
-    <div style="font-size: 0.7rem; color: #f87171; font-family: monospace; margin-bottom: 0.2rem;">Right Branch (Active Leak)</div>
-    <div style="background: #450a0a; border: 1px solid #ef4444; padding: 0.3rem 0.5rem; border-radius: 0.4rem; color: #f87171; font-size: 0.7rem; font-weight: bold; font-family: monospace; margin-bottom: 0.5rem; box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);">
-    💥 Valve Leak A (OPEN: -{unaccounted_loss} L/min)
-    </div>
-    <div style="background: #030712; border: 1px solid #ef4444; padding: 0.3rem 0.6rem; border-radius: 0.4rem; color: #ef4444; font-family: monospace; font-size: 0.75rem; margin-bottom: 0.4rem;">
-    Sensor S2: {node3_flow} L/min
-    </div>
-    <div style="width: 10px; height: 20px; background: #991b1b;"></div>
-    <span style="font-size: 0.7rem; font-weight: bold; color: #ef4444; font-family: monospace;">Outlet A ↴</span>
-    </div>
-
-    </div>
-
-    </div>
-
-    <div style="margin-top: 0.8rem; padding-top: 0.8rem; border-top: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; font-family: monospace; font-size: 0.75rem;">
-    <span style="color: #cbd5e1;">Hardware Fusion Rule: Unaccounted Loss = S1 - (S2 + S3)</span>
-    <span style="background: #450a0a; color: #f87171; padding: 0.2rem 0.6rem; border-radius: 0.4rem; font-weight: bold; border: 1px solid #7f1d1d;">
-    Unaccounted Loss = {unaccounted_loss} L/min
-    </span>
-    </div>
-    </div>
-    """
-        st.markdown(pipeline_html, unsafe_allow_html=True)
-
-        st.markdown("##### 📈 Real-Time Flow Comparison Telemetry")
-        times = [f"10:{10+i:02d}" for i in range(10)]
-        e1_data = [120.0 + np.random.normal(0, 0.3) for _ in range(10)]
-        e2_data = [72.0 + np.random.normal(0, 0.3) for _ in range(10)]
-        e3_data = [48.0, 48.2, 48.1, 10.0, 10.2, 9.9, 10.1, 10.0, 10.1, node3_flow]
-        
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=times, y=e1_data, mode='lines+markers', name='S1 Input Supply', line=dict(color='#38bdf8', width=2)))
-        fig.add_trace(go.Scatter(x=times, y=e2_data, mode='lines+markers', name='S3 Left Branch', line=dict(color='#22d3ee', width=2)))
-        fig.add_trace(go.Scatter(x=times, y=e3_data, mode='lines+markers', name='S2 Right Branch', line=dict(color='#ef4444', width=2)))
-        
-        fig.update_layout(
-            template='plotly_dark',
-            paper_bgcolor='#0b1329',
-            plot_bgcolor='#030712',
-            margin=dict(l=20, r=20, t=30, b=20),
-            height=260,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    with col_right:
-        st.markdown("##### 🔄 5-Stage Lifecycle Tracker")
-        
-        stages = [
-            ("1. DETECT", "Anomaly Passed Threshold", "green"),
-            ("2. LOCATE", "Right Branch (Leak A) Isolated", "green"),
-            ("3. ESCALATE", f"Confidence: {st.session_state.confidence_score}%", "amber"),
-            ("4. VERIFY", "Polling Physics" if st.session_state.incident_state == "VERIFYING" else ("Verification FAILED" if st.session_state.incident_state == "REOPENED" else "Awaiting Operator"), "cyan" if st.session_state.incident_state == "VERIFYING" else ("red" if st.session_state.incident_state == "REOPENED" else "gray")),
-            ("5. INFORM", "Public & Authority Feed", "gray")
-        ]
-        
-        for title, desc, status in stages:
-            if status == "green":
-                st.markdown(f'<div class="stage-box" style="border-color: #059669; color: #34d399;"><b>{title}</b> — {desc} ✓</div>', unsafe_allow_html=True)
-            elif status == "amber":
-                st.markdown(f'<div class="stage-box stage-active"><b>{title}</b> — {desc}</div>', unsafe_allow_html=True)
-            elif status == "cyan":
-                st.markdown(f'<div class="stage-box stage-verifying"><b>{title}</b> — {desc}...</div>', unsafe_allow_html=True)
-            elif status == "red":
-                st.markdown(f'<div class="stage-box stage-reopened"><b>{title}</b> — {desc} 🚨</div>', unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div class="stage-box" style="color: #64748b;"><b>{title}</b> — {desc}</div>', unsafe_allow_html=True)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        st.markdown("##### 🛡️ False Repair Catch Demo")
-        st.info("Simulate an operator claiming 'Repaired' without closing Leak A valve. AQUAGUARD cross-verifies S1, S2, S3 sensors and auto-reopens!")
-        
-        if st.button("🔧 Simulate Operator Claiming 'Repaired'", use_container_width=True, type="primary"):
-            st.session_state.incident_state = "VERIFYING"
-            log_audit_event("Operator filed REPAIR COMPLETE claim → Initiated physical re-verification")
-            st.rerun()
-
-        if st.session_state.incident_state == "VERIFYING":
-            time.sleep(1.5)
-            st.session_state.incident_state = "REOPENED"
-            log_audit_event("🚨 REPAIR VERIFICATION FAILED! Flow loss (38.4 L/min) persists. Ticket AUTO-REOPENED.")
-            st.rerun()
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        st.markdown("##### 🔗 Tamper-Evident SHA-256 Audit Log")
-        st.caption("Append-only event ledger guarding against institutional cover-ups.")
-        
-        for item in st.session_state.audit_chain[:4]:
-            st.markdown(f"""
-            <div class="hash-log-item">
-                <div style="color: #e2e8f0; font-weight: 600;">{item['event']}</div>
-                <div style="display: flex; justify-content: space-between; color: #06b6d4; font-family: monospace; margin-top: 0.2rem;">
-                    <span>Hash: {item['hash']}</span>
-                    <span style="color: #64748b;">{item['time']}</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+    # Render fragment
+    render_iot_live_dashboard()
