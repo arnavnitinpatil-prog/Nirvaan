@@ -227,7 +227,7 @@ st.markdown(f"""
         <div>
             <div style="display: flex; align-items: center; gap: 0.75rem;">
                 <h1 style="margin: 0; font-size: 1.8rem; font-weight: 800; background: linear-gradient(to right, #22d3ee, #38bdf8, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
-                    💧 AQUAGUARD
+                     NIRVAAN
                 </h1>
                 <span class="badge-nirvaan">Nirvaan</span>
                 <span class="badge-team">Team Jal Lijiye</span>
