@@ -226,7 +226,7 @@ st.markdown(f"""
     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
         <div>
             <div style="display: flex; align-items: center; gap: 0.75rem;">
-                <h1 style="margin: 0; font-size: 2.0rem; font-weight: 800; background: linear-gradient(to right, #22d3ee, #38bdf8, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                <h1 style="margin: 0; font-size: 4.0rem; font-weight: 800; background: linear-gradient(to right, #22d3ee, #38bdf8, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
                      NIRVAAN
                 </h1>
                 <span class="badge-nirvaan">Nirvaan</span>
