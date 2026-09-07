@@ -93,12 +93,54 @@ st.markdown("""
         border-radius: 0.375rem;
         font-weight: bold;
     }
-    .status-open { background-color: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid #ef4444; }
+    .status-reported { background-color: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid #ef4444; }
     .status-assigned { background-color: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid #f59e0b; }
-    .status-progress { background-color: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid #3b82f6; }
+    .status-in_progress { background-color: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid #3b82f6; }
     .status-fixed { background-color: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid #10b981; }
+    .status-reopened { background-color: rgba(239, 68, 68, 0.3); color: #fecdd3; border: 1px solid #ef4444; }
+    .status-closed { background-color: rgba(100, 116, 139, 0.2); color: #94a3b8; border: 1px solid #475569; }
 </style>
 """, unsafe_allow_html=True)
+
+# ==============================================================================
+# GLOBAL SHARED IN-MEMORY DATABASE (MULTI-USER SYNC ENGINE)
+# ==============================================================================
+@st.cache_resource
+def get_global_database():
+    """Returns a globally shared dictionary persisted across all users and page refreshes."""
+    def _create_hash(event_text, previous_hash="0x00000000000000"):
+        payload = f"{event_text}|{previous_hash}|{datetime.now().isoformat()}"
+        return "0x" + hashlib.sha256(payload.encode()).hexdigest()[:14]
+
+    initial_hash = _create_hash("AQUAGUARD Global Shared Database Initialized")
+    
+    return {
+        "tickets": [
+            {
+                "id": "TCK-8042",
+                "locality": "DMA Zone 4 — Sector 7 Main Rd",
+                "severity": "Major Burst",
+                "status": "Assigned",
+                "crew": "Crew Alpha (Nordic Hydro)",
+                "eta": "2 Hours",
+                "reported_time": "10:14 AM",
+                "details": "Heavy water burst near junction valve. Flowing onto road.",
+                "pipe_spec": "350mm PVC Distribution Line",
+                "dispute_count": 0
+            }
+        ],
+        "audit_chain": [
+            {
+                "event": "AQUAGUARD Global Shared Database Initialized",
+                "hash": initial_hash,
+                "time": datetime.now().strftime("%I:%M:%S %p")
+            }
+        ],
+        "incident_state": "ESCALATED"
+    }
+
+# Connect local session to global memory instance
+db = get_global_database()
 
 # ==============================================================================
 # HELPER FUNCTIONS & SHA-256 AUDIT ENGINE
@@ -108,16 +150,16 @@ def create_hash(event_text, previous_hash=""):
     return "0x" + hashlib.sha256(payload.encode()).hexdigest()[:14]
 
 def log_audit_event(event_text):
-    prev_hash = st.session_state.audit_chain[0]["hash"] if st.session_state.audit_chain else "0x00000000000000"
+    prev_hash = db["audit_chain"][0]["hash"] if db["audit_chain"] else "0x00000000000000"
     new_hash = create_hash(event_text, prev_hash)
-    st.session_state.audit_chain.insert(0, {
+    db["audit_chain"].insert(0, {
         "event": event_text,
         "hash": new_hash,
         "time": datetime.now().strftime("%I:%M:%S %p")
     })
 
 # ==============================================================================
-# INITIALIZE SESSION STATE & NETWORK CONFIG
+# INITIALIZE LOCAL SESSION STATE
 # ==============================================================================
 if "app_role" not in st.session_state:
     st.session_state.app_role = "🏛️ Municipality Web Portal"
@@ -125,53 +167,11 @@ if "app_role" not in st.session_state:
 if "esp32_ip" not in st.session_state:
     st.session_state.esp32_ip = "192.168.1.50"
 
-if "incident_state" not in st.session_state:
-    st.session_state.incident_state = "ESCALATED" # ESCALATED, VERIFYING, REOPENED, RESOLVED
-    
-    # Historical telemetry buffer for smooth charts
+if "history_times" not in st.session_state:
     st.session_state.history_times = [datetime.now().strftime("%H:%M:%S") for _ in range(10)]
     st.session_state.history_s1 = [0.0] * 10
     st.session_state.history_s2 = [0.0] * 10
     st.session_state.history_s3 = [0.0] * 10
-
-    # Audit Chain Initializer
-    initial_chain = []
-    h1 = create_hash("ESP32 Nodes initialized for live sensor streaming")
-    h2 = create_hash("Flow telemetry bound to DMA Zone 4", h1)
-    
-    initial_chain.append({"event": "Flow telemetry bound to DMA Zone 4", "hash": h2, "time": datetime.now().strftime("%I:%M:%S %p")})
-    initial_chain.append({"event": "ESP32 Nodes initialized for live sensor streaming", "hash": h1, "time": datetime.now().strftime("%I:%M:%S %p")})
-    st.session_state.audit_chain = initial_chain
-
-# Role 1: Citizen Tickets DB
-if "citizen_tickets" not in st.session_state:
-    st.session_state.citizen_tickets = [
-        {
-            "id": "TCK-8042",
-            "locality": "DMA Zone 4 — Sector 7 Main Rd",
-            "severity": "Major Burst",
-            "status": "Assigned",
-            "crew": "Crew Alpha (Nordic Hydro)",
-            "eta": "2 Hours",
-            "reported_time": "10:14 AM",
-            "details": "Heavy water burst near junction valve. Flowing onto road.",
-            "dispute_count": 0
-        }
-    ]
-
-# Role 2: Crew Assignments DB
-if "crew_tasks" not in st.session_state:
-    st.session_state.crew_tasks = [
-        {
-            "id": "TCK-8042",
-            "zone": "Zone 4 - Sec 7",
-            "assigned_by": "Municipal Admin",
-            "status": "Accepted",
-            "eta": "2 Hours",
-            "pipe_spec": "350mm PVC Distribution Line",
-            "notes": "Valve Leak A requires replacement packing."
-        }
-    ]
 
 # ==============================================================================
 # REAL-TIME HARDWARE TELEMETRY ENGINE (PURE LIVE ESP32 POLLING)
@@ -213,6 +213,9 @@ st.sidebar.markdown("### 🌐 ESP32 Hardware Configuration")
 st.session_state.esp32_ip = st.sidebar.text_input("ESP32 IP / Endpoint URL", value=st.session_state.esp32_ip)
 
 st.sidebar.markdown("---")
+if st.sidebar.button("🔄 Sync Global Data"):
+    st.rerun()
+
 st.sidebar.caption("SIH Project Phase — Team Jal Lijiye (Nirvaan Architecture)")
 
 # ==============================================================================
@@ -254,8 +257,13 @@ if st.session_state.app_role == "🏛️ Municipality Web Portal":
     with col1:
         st.markdown("##### 📋 Active Zone Leakage Incident Queue")
         
-        for tck in st.session_state.citizen_tickets:
-            status_class = f"status-{tck['status'].lower()}"
+        if not db["tickets"]:
+            st.info("No active tickets reported in the system.")
+        
+        for tck in db["tickets"]:
+            status_slug = tck['status'].lower().replace(" ", "_")
+            status_class = f"status-{status_slug}"
+            
             st.markdown(f"""
             <div class="role-card">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -265,35 +273,35 @@ if st.session_state.app_role == "🏛️ Municipality Web Portal":
                 <div style="font-size: 0.9rem; font-weight: 700; margin-top: 0.4rem; color: #f3f4f6;">📍 {tck['locality']}</div>
                 <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 0.2rem;">{tck['details']}</div>
                 <div style="font-size: 0.75rem; color: #64748b; margin-top: 0.5rem; font-family: monospace;">
-                    Reported: {tck['reported_time']} | Severity: {tck['severity']} | Disputed Re-opens: {tck['dispute_count']}
+                    Assigned: <b>{tck['crew']}</b> | Reported: {tck['reported_time']} | Severity: {tck['severity']} | Disputed Re-opens: {tck['dispute_count']}
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
             c_act1, c_act2, c_act3 = st.columns(3)
             with c_act1:
-                if tck['status'] == "Reported":
-                    if st.button("🚀 Dispatch Crew Alpha", key="muni_dispatch"):
+                if tck['status'] in ["Reported", "Reopened"]:
+                    if st.button(f"🚀 Dispatch Crew Alpha", key=f"muni_dispatch_{tck['id']}"):
                         tck['status'] = "Assigned"
-                        tck['crew'] = "Crew Alpha"
+                        tck['crew'] = "Crew Alpha (Nordic Hydro)"
                         log_audit_event(f"Municipality dispatched Crew Alpha to Ticket {tck['id']}")
                         st.success("Repair Crew Dispatched!")
                         st.rerun()
             
             with c_act2:
-                if tck['status'] in ["Fixed", "Repair Filed"]:
-                    if st.button("🔍 Verify Physics & Close", key="muni_verify"):
+                if tck['status'] in ["Fixed", "Repair Complete"]:
+                    if st.button(f"🔍 Verify Physics & Close", key=f"muni_verify_{tck['id']}"):
                         s1, s2, s3, _ = fetch_esp32_telemetry()
                         loss = round(s1 - s2 - s3, 1)
                         if loss > 5.0:
                             tck['status'] = "Reopened"
                             tck['dispute_count'] += 1
-                            st.session_state.incident_state = "REOPENED"
+                            db["incident_state"] = "REOPENED"
                             log_audit_event(f"🚨 Municipal Inspection FAILED for {tck['id']}! Sensor loss ({loss} L/min) persists. Ticket REOPENED.")
                             st.error("False Repair Detected by ESP32 sensors! Ticket auto-reopened.")
                         else:
                             tck['status'] = "Closed"
-                            st.session_state.incident_state = "RESOLVED"
+                            db["incident_state"] = "RESOLVED"
                             log_audit_event(f"✅ Municipal Admin verified repair for {tck['id']}. Ticket formally CLOSED.")
                             st.success("Repair verified by hardware. Case Closed!")
                         st.rerun()
@@ -304,7 +312,7 @@ if st.session_state.app_role == "🏛️ Municipality Web Portal":
 
     with col2:
         st.markdown("##### 🔗 Real-Time Audit Log")
-        for item in st.session_state.audit_chain[:5]:
+        for item in db["audit_chain"][:6]:
             st.markdown(f"""
             <div class="hash-log-item">
                 <div style="color: #e2e8f0; font-weight: 600;">{item['event']}</div>
@@ -333,7 +341,7 @@ elif st.session_state.app_role == "👨‍👩‍👧 Local Citizen Mobile App":
             
             if submitted:
                 new_id = f"TCK-{np.random.randint(1000, 9999)}"
-                st.session_state.citizen_tickets.append({
+                db["tickets"].append({
                     "id": new_id,
                     "locality": loc,
                     "severity": sev,
@@ -342,6 +350,7 @@ elif st.session_state.app_role == "👨‍👩‍👧 Local Citizen Mobile App":
                     "eta": "Awaiting Triage",
                     "reported_time": datetime.now().strftime("%I:%M %p"),
                     "details": desc,
+                    "pipe_spec": "Standard Distribution Pipe",
                     "dispute_count": 0
                 })
                 log_audit_event(f"Citizen submitted leak report {new_id} at {loc}")
@@ -349,13 +358,14 @@ elif st.session_state.app_role == "👨‍👩‍👧 Local Citizen Mobile App":
                 st.rerun()
 
     with c_right:
-        st.markdown("##### 📱 Your Active Ticket Tracking")
-        for tck in st.session_state.citizen_tickets:
+        st.markdown("##### 📱 Live Ticket Queue Across All Users")
+        for tck in db["tickets"]:
+            status_slug = tck['status'].lower().replace(" ", "_")
             st.markdown(f"""
             <div class="role-card">
                 <div style="display: flex; justify-content: space-between;">
                     <span style="font-weight: 800; color: #38bdf8; font-family: monospace;">{tck['id']}</span>
-                    <span class="ticket-badge status-{tck['status'].lower()}">{tck['status'].upper()}</span>
+                    <span class="ticket-badge status-{status_slug}">{tck['status'].upper()}</span>
                 </div>
                 <div style="font-size: 0.9rem; font-weight: bold; margin-top: 0.4rem;">{tck['locality']}</div>
                 <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 0.2rem;">Assigned Crew: <b>{tck['crew']}</b></div>
@@ -363,7 +373,7 @@ elif st.session_state.app_role == "👨‍👩‍👧 Local Citizen Mobile App":
             </div>
             """, unsafe_allow_html=True)
 
-            if tck['status'] in ["Fixed", "Closed", "Repair Filed"]:
+            if tck['status'] in ["Fixed", "Closed", "Repair Complete"]:
                 col_disp1, col_disp2 = st.columns(2)
                 with col_disp1:
                     if st.button("✅ Confirm Water Fixed", key=f"confirm_{tck['id']}"):
@@ -375,13 +385,13 @@ elif st.session_state.app_role == "👨‍👩‍👧 Local Citizen Mobile App":
                     if st.button("🚨 Report False Repair", key=f"dispute_{tck['id']}"):
                         tck['status'] = "Reopened"
                         tck['dispute_count'] += 1
-                        st.session_state.incident_state = "REOPENED"
+                        db["incident_state"] = "REOPENED"
                         log_audit_event(f"🚨 CITIZEN DISPUTE! Citizen reported FALSE REPAIR on {tck['id']}. Ticket re-escalated.")
                         st.error("Ticket re-opened and flagged for municipal audit!")
                         st.rerun()
 
 # ==============================================================================
-# INTERFACE 3: REPAIR CREW GROUND APP
+# INTERFACE 3: REPAIR CREW GROUND APP (CONNECTED TO GLOBAL QUEUE)
 # ==============================================================================
 elif st.session_state.app_role == "🛠️ Repair Crew Ground App":
     st.subheader("🛠️ Ground Repair Crew Mobile Portal")
@@ -389,43 +399,51 @@ elif st.session_state.app_role == "🛠️ Repair Crew Ground App":
 
     col_crew1, col_crew2 = st.columns([6, 6])
 
+    # Filter assigned tasks directly from the global database
+    assigned_tasks = [t for t in db["tickets"] if t['status'] not in ["Closed"]]
+
     with col_crew1:
         st.markdown("##### 👷 Active Task Assignments")
-        for task in st.session_state.crew_tasks:
+        if not assigned_tasks:
+            st.info("No active repair tasks currently assigned.")
+            
+        for task in assigned_tasks:
+            status_slug = task['status'].lower().replace(" ", "_")
             st.markdown(f"""
             <div class="role-card">
                 <div style="display: flex; justify-content: space-between;">
                     <span style="font-weight: 800; color: #38bdf8; font-family: monospace;">{task['id']}</span>
-                    <span class="ticket-badge status-assigned">{task['status'].upper()}</span>
+                    <span class="ticket-badge status-{status_slug}">{task['status'].upper()}</span>
                 </div>
-                <div style="font-size: 0.9rem; font-weight: bold; margin-top: 0.4rem;">Location: {task['zone']}</div>
+                <div style="font-size: 0.9rem; font-weight: bold; margin-top: 0.4rem;">Location: {task['locality']}</div>
                 <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 0.2rem;">Pipeline Spec: {task['pipe_spec']}</div>
-                <div style="font-size: 0.8rem; color: #94a3b8;">Task Notes: {task['notes']}</div>
+                <div style="font-size: 0.8rem; color: #94a3b8;">Details: {task['details']}</div>
             </div>
             """, unsafe_allow_html=True)
 
     with col_crew2:
         st.markdown("##### 📝 Submit Repair Status Update")
-        with st.form("crew_update_form"):
-            t_id = st.selectbox("Select Task Ticket", [t['id'] for t in st.session_state.crew_tasks])
-            c_status = st.selectbox("Work Progress", ["In Progress", "Parts Replaced - Testing", "Repair Complete"])
-            eta_update = st.text_input("Estimated Fix Completion", "45 Minutes")
-            work_notes = st.text_area("Ground Repair Log", "Replaced worn gasket on Leak A Valve. Closed emergency bypass.")
-            
-            submit_work = st.form_submit_button("📤 Submit Repair Log")
-            
-            if submit_work:
-                for t in st.session_state.crew_tasks:
-                    if t['id'] == t_id:
-                        t['status'] = c_status
-                for c in st.session_state.citizen_tickets:
-                    if c['id'] == t_id:
-                        c['status'] = "Fixed" if c_status == "Repair Complete" else "In Progress"
-                        c['eta'] = eta_update
+        if assigned_tasks:
+            with st.form("crew_update_form"):
+                t_id = st.selectbox("Select Assigned Ticket", [t['id'] for t in assigned_tasks])
+                c_status = st.selectbox("Work Progress", ["In Progress", "Parts Replaced - Testing", "Repair Complete"])
+                eta_update = st.text_input("Estimated Fix Completion", "45 Minutes")
+                work_notes = st.text_area("Ground Repair Log", "Replaced worn gasket on Valve Leak A. Restored line pressure.")
                 
-                log_audit_event(f"Crew logged work status '{c_status}' for ticket {t_id}")
-                st.success("Repair status logged and transmitted to Municipality & Citizen!")
-                st.rerun()
+                submit_work = st.form_submit_button("📤 Submit Repair Log")
+                
+                if submit_work:
+                    for t in db["tickets"]:
+                        if t['id'] == t_id:
+                            t['status'] = c_status
+                            t['eta'] = eta_update
+                            t['details'] = work_notes
+                    
+                    log_audit_event(f"Crew logged work status '{c_status}' for ticket {t_id}")
+                    st.success("Repair status logged and synced globally across all users!")
+                    st.rerun()
+        else:
+            st.caption("Awaiting new dispatch assignments from Municipality Command.")
 
 # ==============================================================================
 # INTERFACE 4: IOT HARDWARE TELEMETRY DASHBOARD (ISOLATED NON-FLICKER FRAGMENT)
@@ -447,7 +465,6 @@ else:
         st.session_state.history_s2 = st.session_state.history_s2[-10:]
         st.session_state.history_s3 = st.session_state.history_s3[-10:]
 
-        # Anomaly localization logic based on active readings
         if unaccounted_loss > 5.0:
             localized_node = "Valve Leak A (Right Branch — Node 03)"
         elif not is_hardware_live:
@@ -455,10 +472,10 @@ else:
         else:
             localized_node = "System Nominal (No Active Leaks)"
 
-        if st.session_state.incident_state == "REOPENED":
+        if db["incident_state"] == "REOPENED":
             banner_title = "🚨 CRITICAL INCIDENT #8042 — FALSE REPAIR CAUGHT!"
             banner_desc = f"Accountability Guard Triggered! Claimed repair rejected. Unaccounted loss of <span style='color: #ef4444; font-family: monospace; font-weight: bold;'>{unaccounted_loss} L/min</span> isolated at <b>{localized_node}</b>."
-        elif st.session_state.incident_state == "RESOLVED":
+        elif db["incident_state"] == "RESOLVED":
             banner_title = "✅ INCIDENT #8042 — LEAK SUCCESSFULLY RESOLVED"
             banner_desc = "Physical flow balance restored across live S1, S2, and S3 sensors."
         else:
@@ -531,7 +548,6 @@ else:
 
             st.markdown("<br>", unsafe_allow_html=True)
 
-            # Live Topology Diagram
             pipeline_html = f"""
             <div style="background-color: #0b1329; border: 1px solid #1e293b; border-radius: 1rem; padding: 1.25rem; margin-bottom: 1rem; text-align: center;">
                 <div style="font-size: 0.85rem; font-weight: 700; color: #38bdf8; margin-bottom: 0.5rem;">
@@ -557,7 +573,6 @@ else:
             """
             st.markdown(pipeline_html, unsafe_allow_html=True)
 
-            # Live Plotly Telemetry Chart
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=st.session_state.history_times, y=st.session_state.history_s1, mode='lines+markers', name='S1 Input', line=dict(color='#38bdf8', width=2)))
             fig.add_trace(go.Scatter(x=st.session_state.history_times, y=st.session_state.history_s2, mode='lines+markers', name='S2 Branch A', line=dict(color='#22d3ee', width=2)))
@@ -578,16 +593,16 @@ else:
             
             if st.button("🔍 Check Physical Fix Status", use_container_width=True, type="primary"):
                 if unaccounted_loss > 5.0:
-                    st.session_state.incident_state = "REOPENED"
+                    db["incident_state"] = "REOPENED"
                     log_audit_event(f"🚨 REPAIR REJECTED! Live sensors measured {unaccounted_loss} L/min loss. Incident AUTO-REOPENED.")
                 else:
-                    st.session_state.incident_state = "RESOLVED"
+                    db["incident_state"] = "RESOLVED"
                     log_audit_event("✅ Physical flow balanced. Incident RESOLVED.")
                 st.rerun()
 
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown("##### 🔗 SHA-256 Audit Log")
-            for item in st.session_state.audit_chain[:4]:
+            for item in db["audit_chain"][:4]:
                 st.markdown(f"""
                 <div class="hash-log-item">
                     <div style="color: #e2e8f0; font-weight: 600;">{item['event']}</div>
@@ -598,5 +613,4 @@ else:
                 </div>
                 """, unsafe_allow_html=True)
 
-    # Render fragment
     render_iot_live_dashboard()
